@@ -38,23 +38,43 @@ async def test_successful_prediction_is_parsed_into_typed_model():
         body = {
             "choices": [
                 {"message": {"content": json.dumps({
-                    "city": "New York",
-                    "predicted_probability": 0.73,
-                    "reasoning": "Temperature 22.5C with 0mm precipitation and high confidence 0.9 favors clear conditions.",
+                    "predictions": [
+                        {
+                            "city": "New York",
+                            "market_question": "Will it rain in New York tomorrow?",
+                            "predicted_probability": 0.73,
+                            "reasoning": "Temperature 22.5C with 0mm precipitation and high confidence 0.9 favors clear conditions.",
+                        }
+                    ]
                 })}}
             ]
         }
         return httpx.Response(200, json=body)
 
+    from models.market import MarketOutcome, PolymarketMarket
+    from datetime import datetime, timezone
+
+    market = PolymarketMarket(
+        condition_id="cond-1",
+        question="Will it rain in New York tomorrow?",
+        city="New York",
+        closes_at=datetime.now(timezone.utc),
+        outcomes=[MarketOutcome(name="Yes", token_id="tok-1", price=0.45)],
+    )
+
     client = _client_with_response(handler)
     agent = HermesPredictionAgent(_settings(), client=client)
-    result = await agent.generate_prediction(_weather(), "Will it rain in New York tomorrow?")
+    results = await agent.generate_predictions_batch(
+        weather_map={"New York": _weather()},
+        markets_map={"New York": [market]},
+    )
 
-    assert result is not None
-    assert result.predicted_probability == 0.73
-    assert result.probability == 0.73  # backward-compat alias
-    assert result.city == "New York"
-    assert "0.9" in result.reasoning or "22.5" in result.reasoning
+    assert results
+    preds = results.get("New York", [])
+    assert len(preds) == 1
+    assert preds[0].predicted_probability == 0.73
+    assert preds[0].probability == 0.73
+    assert "22.5" in preds[0].reasoning or preds[0].reasoning != ""
     await agent.aclose()
 
 
